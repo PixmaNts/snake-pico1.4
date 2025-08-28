@@ -19,6 +19,8 @@ use {defmt_rtt as _, panic_probe as _};
 use embedded_graphics::{
     pixelcolor::Rgb565,
     prelude::*,
+    text::{Text, Baseline},
+    mono_font::{ascii::FONT_6X10, MonoTextStyle},
 };
 // Provides the parallel port and display interface builders
 use mipidsi::interface::SpiInterface;
@@ -43,6 +45,47 @@ const GRID_HEIGHT: i32 = DISPLAY_HEIGHT / CELL_SIZE;
 
 
 type SpiBus = BlockingMutex<NoopRawMutex, RefCell<Spi<'static, embassy_rp::peripherals::SPI1, embassy_rp::spi::Blocking>>>;
+
+#[derive(Clone, Copy, PartialEq)]
+enum GameState {
+    WaitingStart,
+    Playing,
+}
+
+// Helper function to draw white border around game area
+fn draw_border<T: embedded_graphics::draw_target::DrawTarget<Color = Rgb565>>(display: &mut T) {
+    use embedded_graphics::primitives::{Rectangle, PrimitiveStyle};
+    
+    // Top border
+    let _ = Rectangle::new(Point::new(0, 0), Size::new(DISPLAY_WIDTH as u32, 1))
+        .into_styled(PrimitiveStyle::with_fill(Rgb565::WHITE))
+        .draw(display);
+    
+    // Bottom border  
+    let _ = Rectangle::new(Point::new(0, DISPLAY_HEIGHT - 1), Size::new(DISPLAY_WIDTH as u32, 1))
+        .into_styled(PrimitiveStyle::with_fill(Rgb565::WHITE))
+        .draw(display);
+        
+    // Left border
+    let _ = Rectangle::new(Point::new(0, 0), Size::new(1, DISPLAY_HEIGHT as u32))
+        .into_styled(PrimitiveStyle::with_fill(Rgb565::WHITE))
+        .draw(display);
+        
+    // Right border
+    let _ = Rectangle::new(Point::new(DISPLAY_WIDTH - 1, 0), Size::new(1, DISPLAY_HEIGHT as u32))
+        .into_styled(PrimitiveStyle::with_fill(Rgb565::WHITE))
+        .draw(display);
+}
+
+// Helper function to show start screen
+fn show_start_screen<T: embedded_graphics::draw_target::DrawTarget<Color = Rgb565>>(display: &mut T) {
+    let text_style = MonoTextStyle::new(&FONT_6X10, Rgb565::WHITE);
+    
+    let _ = Text::with_baseline("Press B", Point::new(40, 100), text_style, Baseline::Top)
+        .draw(display);
+    let _ = Text::with_baseline("to Start", Point::new(35, 120), text_style, Baseline::Top)
+        .draw(display);
+}
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -83,7 +126,7 @@ async fn main(spawner: Spawner) {
     // Initialize display with working config
     let mut display = Builder::new(ST7789, spi_interface)
         .display_size(DISPLAY_WIDTH as u16, DISPLAY_HEIGHT as u16)
-        .display_offset(53, 40) // Waveshare LCD 1.14" offset for 90° rotation
+        .display_offset(52, 40) // Waveshare LCD 1.14" offset for 90° rotation
         .invert_colors(ColorInversion::Inverted)
         .reset_pin(reset_pin)
         .init(&mut embassy_time::Delay)
@@ -124,8 +167,9 @@ async fn main(spawner: Spawner) {
 
     info!("Display initialized, starting Snake with joystick control!");
 
-    // Clear screen 
+    // Clear screen and draw border
     display.clear(Rgb565::BLACK).unwrap();
+    draw_border(&mut display);
     
     // Simple Snake game loop
     use embedded_graphics::primitives::{Rectangle, PrimitiveStyle};
@@ -220,6 +264,7 @@ async fn input_handler(
                 InputEvent::ButtonA => {
                     snake_game.reset();
                     display.clear(Rgb565::BLACK).unwrap();
+                    draw_border(&mut display);
                     previous_snake = snake_game.snake.clone();
                     previous_food = snake_game.food;
                 }
@@ -248,8 +293,8 @@ async fn input_handler(
                 // If not occupied anymore, erase it
                 if !found {
                     Rectangle::new(
-                        Point::new((old_segment.x as i32) * CELL_SIZE, (old_segment.y as i32) * CELL_SIZE),
-                        Size::new(CELL_SIZE as u32, CELL_SIZE as u32)
+                        Point::new((old_segment.x as i32) * CELL_SIZE + 1, (old_segment.y as i32) * CELL_SIZE + 1),
+                        Size::new((CELL_SIZE - 1) as u32, (CELL_SIZE - 1) as u32)
                     )
                     .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
                     .draw(&mut display).unwrap();
@@ -259,8 +304,8 @@ async fn input_handler(
             // 2. Erase old food position if it moved
             if previous_food.x != snake_game.food.x || previous_food.y != snake_game.food.y {
                 Rectangle::new(
-                    Point::new((previous_food.x as i32) * CELL_SIZE, (previous_food.y as i32) * CELL_SIZE),
-                    Size::new(CELL_SIZE as u32, CELL_SIZE as u32)
+                    Point::new((previous_food.x as i32) * CELL_SIZE + 1, (previous_food.y as i32) * CELL_SIZE + 1),
+                    Size::new((CELL_SIZE - 1) as u32, (CELL_SIZE - 1) as u32)
                 )
                 .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
                 .draw(&mut display).unwrap();
@@ -269,8 +314,8 @@ async fn input_handler(
             // 3. Draw new snake positions
             for new_segment in &snake_game.snake {
                 Rectangle::new(
-                    Point::new((new_segment.x as i32) * CELL_SIZE, (new_segment.y as i32) * CELL_SIZE),
-                    Size::new(CELL_SIZE as u32, CELL_SIZE as u32)
+                    Point::new((new_segment.x as i32) * CELL_SIZE + 1, (new_segment.y as i32) * CELL_SIZE + 1),
+                    Size::new((CELL_SIZE - 1) as u32, (CELL_SIZE - 1) as u32)
                 )
                 .into_styled(PrimitiveStyle::with_fill(Rgb565::GREEN))
                 .draw(&mut display).unwrap();
@@ -278,8 +323,8 @@ async fn input_handler(
             
             // 4. Draw food
             Rectangle::new(
-                Point::new((snake_game.food.x as i32) * CELL_SIZE, (snake_game.food.y as i32) * CELL_SIZE),
-                Size::new(CELL_SIZE as u32, CELL_SIZE as u32)
+                Point::new((snake_game.food.x as i32) * CELL_SIZE + 1, (snake_game.food.y as i32) * CELL_SIZE + 1),
+                Size::new((CELL_SIZE - 1) as u32, (CELL_SIZE - 1) as u32)
             )
             .into_styled(PrimitiveStyle::with_fill(Rgb565::RED))
             .draw(&mut display).unwrap();
@@ -290,7 +335,7 @@ async fn input_handler(
         }
         
         frame_counter = frame_counter.wrapping_add(1);
-        Timer::after_millis(50).await; // Much faster loop, but only updates game occasionally
+        Timer::after_millis(30).await; // Much faster loop, but only updates game occasionally
     }
 }
 
