@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-use defmt::{info, println};
+use defmt::{info, debug};
 use embassy_embedded_hal::shared_bus::blocking::spi::SpiDeviceWithConfig;
 use embassy_executor::Spawner;
 use embassy_rp::gpio::{Level, Output, Pull, Input};
@@ -166,22 +166,22 @@ async fn input_handler(
             if joy_up.is_low() {
                 sender.send(InputEvent::DirectionChange(Direction::Right)).await;
                 last_direction_time = now;
-                println!("Direction: UP");
+                debug!("Direction: UP");
                 Timer::after_millis(50).await; // Extra debounce for direction
             } else if joy_down.is_low() {
                 sender.send(InputEvent::DirectionChange(Direction::Left)).await;
                 last_direction_time = now;
-                println!("Direction: DOWN");
+                debug!("Direction: DOWN");
                 Timer::after_millis(50).await;
             } else if joy_left.is_low() {
                 sender.send(InputEvent::DirectionChange(Direction::Up)).await;
                 last_direction_time = now;
-                println!("Direction: LEFT");
+                debug!("Direction: LEFT");
                 Timer::after_millis(50).await;
             } else if joy_right.is_low() {
                 sender.send(InputEvent::DirectionChange(Direction::Down)).await;
                 last_direction_time = now;
-                println!("Direction: RIGHT");
+                debug!("Direction: RIGHT");
                 Timer::after_millis(50).await;
             }
         }
