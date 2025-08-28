@@ -57,7 +57,7 @@ impl Game {
         // Start snake in the middle of the screen
         let start_x = width / 2;
         let start_y = height / 2;
-        
+
         snake.push(Position::new(start_x, start_y)).unwrap();
         snake.push(Position::new(start_x - 1, start_y)).unwrap();
         snake.push(Position::new(start_x - 2, start_y)).unwrap();
@@ -84,10 +84,14 @@ impl Game {
         self.snake.clear();
         let start_x = self.width / 2;
         let start_y = self.height / 2;
-        
+
         self.snake.push(Position::new(start_x, start_y)).unwrap();
-        self.snake.push(Position::new(start_x - 1, start_y)).unwrap();
-        self.snake.push(Position::new(start_x - 2, start_y)).unwrap();
+        self.snake
+            .push(Position::new(start_x - 1, start_y))
+            .unwrap();
+        self.snake
+            .push(Position::new(start_x - 2, start_y))
+            .unwrap();
 
         self.direction = Direction::Right;
         self.next_direction = Direction::Right;
@@ -157,9 +161,9 @@ impl Game {
         for _attempt in 0..100 {
             let x = self.next_random() % self.width as u32;
             let y = self.next_random() % self.height as u32;
-            
+
             let new_food = Position::new(x as u8, y as u8);
-            
+
             // Make sure food doesn't spawn on snake
             let mut valid = true;
             for segment in &self.snake {
@@ -168,13 +172,13 @@ impl Game {
                     break;
                 }
             }
-            
+
             if valid {
                 self.food = new_food;
                 return;
             }
         }
-        
+
         // Fallback if no valid position found (shouldn't happen with reasonable snake size)
         self.food = Position::new(0, 0);
     }
@@ -186,11 +190,11 @@ impl Game {
         self.rng_state ^= self.rng_state << 5;
         self.rng_state
     }
-    
+
     pub fn width(&self) -> u8 {
         self.width
     }
-    
+
     pub fn height(&self) -> u8 {
         self.height
     }
