@@ -9,6 +9,8 @@ use embassy_rp::gpio::{Level, Output, Pull, Input};
 use embassy_rp::spi::{Config as SpiConfig, Spi};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::blocking_mutex::{Mutex as BlockingMutex};
+use embassy_sync::channel::Channel;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use core::cell::RefCell;
 use embassy_time::{Timer, Instant};
 use static_cell::StaticCell;
@@ -43,7 +45,7 @@ const GRID_HEIGHT: i32 = DISPLAY_HEIGHT / CELL_SIZE;
 type SpiBus = BlockingMutex<NoopRawMutex, RefCell<Spi<'static, embassy_rp::peripherals::SPI1, embassy_rp::spi::Blocking>>>;
 
 #[embassy_executor::main]
-async fn main(_spawner: Spawner) {
+async fn main(spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
     info!("Snake Game Starting!");
 
@@ -111,11 +113,14 @@ async fn main(_spawner: Spawner) {
     let button_a = Input::new(p.PIN_15, Pull::Up);
     let button_b = Input::new(p.PIN_17, Pull::Up);
     
-    // Initialize joystick pins
+    // Initialize joystick pins  
     let joy_up = Input::new(p.PIN_2, Pull::Up);
     let joy_left = Input::new(p.PIN_16, Pull::Up);
     let joy_down = Input::new(p.PIN_18, Pull::Up);
     let joy_right = Input::new(p.PIN_20, Pull::Up);
+    
+    // Spawn the input handler task
+    spawner.spawn(input_handler(joy_up, joy_down, joy_left, joy_right, button_a, button_b)).unwrap();
 
     info!("Display initialized, starting Snake with joystick control!");
 
@@ -125,9 +130,75 @@ async fn main(_spawner: Spawner) {
     // Simple Snake game loop
     use embedded_graphics::primitives::{Rectangle, PrimitiveStyle};
     use game::{Game, Direction};
+
+// Input events for async handling
+#[derive(Copy, Clone, Debug)]
+pub enum InputEvent {
+    DirectionChange(Direction),
+    ButtonA,
+    ButtonB,
+}
+
+// Global event channel for input events  
+static INPUT_CHANNEL: Channel<CriticalSectionRawMutex, InputEvent, 10> = Channel::new();
+
+// Input handler task
+#[embassy_executor::task]
+async fn input_handler(
+    joy_up: Input<'static>,
+    joy_down: Input<'static>, 
+    joy_left: Input<'static>,
+    joy_right: Input<'static>,
+    button_a: Input<'static>,
+    button_b: Input<'static>,
+) {
+    let sender = INPUT_CHANNEL.sender();
+    let mut last_direction_time = Instant::now();
+    const DIRECTION_COOLDOWN_MS: u64 = 150;
+    
+    loop {
+        // Poll inputs with a small delay - still much better than the old approach
+        Timer::after_millis(20).await;
+        
+        // Check which input is active and send appropriate event
+        let now = Instant::now();
+        if now.duration_since(last_direction_time).as_millis() > DIRECTION_COOLDOWN_MS {
+            if joy_up.is_low() {
+                sender.send(InputEvent::DirectionChange(Direction::Right)).await;
+                last_direction_time = now;
+                println!("Direction: UP");
+                Timer::after_millis(50).await; // Extra debounce for direction
+            } else if joy_down.is_low() {
+                sender.send(InputEvent::DirectionChange(Direction::Left)).await;
+                last_direction_time = now;
+                println!("Direction: DOWN");
+                Timer::after_millis(50).await;
+            } else if joy_left.is_low() {
+                sender.send(InputEvent::DirectionChange(Direction::Up)).await;
+                last_direction_time = now;
+                println!("Direction: LEFT");
+                Timer::after_millis(50).await;
+            } else if joy_right.is_low() {
+                sender.send(InputEvent::DirectionChange(Direction::Down)).await;
+                last_direction_time = now;
+                println!("Direction: RIGHT");
+                Timer::after_millis(50).await;
+            }
+        }
+        
+        if button_a.is_low() {
+            sender.send(InputEvent::ButtonA).await;
+            Timer::after_millis(200).await; // Longer debounce for reset button
+        }
+        
+        if button_b.is_low() {
+            sender.send(InputEvent::ButtonB).await;
+            Timer::after_millis(100).await;
+        }
+    }
+}
     
     let mut snake_game = Game::new((DISPLAY_WIDTH / CELL_SIZE) as u8, (DISPLAY_HEIGHT / CELL_SIZE) as u8);
-    let mut last_direction_change = Instant::now();
     
     // Clear screen once at start
     display.clear(Rgb565::BLACK).unwrap();
@@ -136,63 +207,26 @@ async fn main(_spawner: Spawner) {
     let mut previous_snake = snake_game.snake.clone();
     let mut previous_food = snake_game.food;
     
-    // Input debouncing for shitty joystick
-    let mut input_counters = [0u8; 4]; // up, down, left, right
-    let mut last_direction_set = Instant::now();
-    const INPUT_THRESHOLD: u8 = 3; // Need 3 consecutive reads to register
-    const DIRECTION_COOLDOWN_MS: u64 = 150; // Minimum time between direction changes
+    // Get receiver for input events
+    let receiver = INPUT_CHANNEL.receiver();
     
     loop {
-        // DEBOUNCED INPUT READING - fixes shitty joystick!
-        
-        // Read current joystick state
-        let current_inputs = [
-            joy_up.is_low(),    // 0
-            joy_down.is_low(),  // 1
-            joy_left.is_low(),  // 2
-            joy_right.is_low()  // 3
-        ];
-        
-        // Update counters based on current state
-        for i in 0..4 {
-            if current_inputs[i] {
-                input_counters[i] = (input_counters[i] + 1).min(INPUT_THRESHOLD + 1);
-            } else {
-                input_counters[i] = 0;
+        // Check for input events (non-blocking)
+        while let Ok(event) = receiver.try_receive() {
+            match event {
+                InputEvent::DirectionChange(direction) => {
+                    snake_game.set_direction(direction);
+                }
+                InputEvent::ButtonA => {
+                    snake_game.reset();
+                    display.clear(Rgb565::BLACK).unwrap();
+                    previous_snake = snake_game.snake.clone();
+                    previous_food = snake_game.food;
+                }
+                InputEvent::ButtonB => {
+                    // Could add pause/resume functionality here
+                }
             }
-        }
-        
-        // Only change direction if:
-        // 1. Input has been stable for THRESHOLD frames
-        // 2. Enough time has passed since last direction change (cooldown)
-        if Instant::now().duration_since(last_direction_set).as_millis() > DIRECTION_COOLDOWN_MS {
-            if input_counters[0] >= INPUT_THRESHOLD { // up
-                snake_game.set_direction(Direction::Up);
-                last_direction_set = Instant::now();
-                println!("Direction: UP");
-            } else if input_counters[1] >= INPUT_THRESHOLD { // down
-                snake_game.set_direction(Direction::Down);
-                last_direction_set = Instant::now();
-                println!("Direction: DOWN");
-            } else if input_counters[2] >= INPUT_THRESHOLD { // left
-                snake_game.set_direction(Direction::Left);
-                last_direction_set = Instant::now();
-                println!("Direction: LEFT");
-            } else if input_counters[3] >= INPUT_THRESHOLD { // right
-                snake_game.set_direction(Direction::Right);
-                last_direction_set = Instant::now();
-                println!("Direction: RIGHT");
-            }
-        }
-        
-        // Button A to reset game (check every few frames to avoid spam)
-        if frame_counter % 10 == 0 && button_a.is_low() {
-            snake_game.reset();
-            // Full clear only on reset
-            display.clear(Rgb565::BLACK).unwrap();
-            previous_snake = snake_game.snake.clone();
-            previous_food = snake_game.food;
-            Timer::after_millis(200).await; // Debounce
         }
         
         // Only update game logic every 10 frames (slower game speed)
