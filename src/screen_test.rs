@@ -10,7 +10,6 @@ use embassy_rp::spi::{Config as SpiConfig, Spi};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_time::Timer;
-use mipidsi::options::Orientation;
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -24,7 +23,7 @@ use embedded_graphics::{
 use mipidsi::interface::SpiInterface;
 use mipidsi::{
     models::ST7789,
-    options::{ColorInversion, Rotation},
+    options::ColorInversion,
     Builder,
 };
 
