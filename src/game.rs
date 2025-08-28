@@ -44,6 +44,8 @@ pub struct Game {
     pub next_direction: Direction,
     pub state: GameState,
     pub score: u16,
+    pub food_eaten: u16,
+    pub game_over: bool,
     width: u8,
     height: u8,
     rng_state: u32, // Simple LFSR for random numbers
@@ -67,6 +69,8 @@ impl Game {
             next_direction: Direction::Right,
             state: GameState::Playing,
             score: 0,
+            food_eaten: 0,
+            game_over: false,
             width,
             height,
             rng_state: 0xACE1u32, // Seed for random number generator
@@ -89,6 +93,8 @@ impl Game {
         self.next_direction = Direction::Right;
         self.state = GameState::Playing;
         self.score = 0;
+        self.food_eaten = 0;
+        self.game_over = false;
         self.spawn_food();
     }
 
@@ -118,14 +124,14 @@ impl Game {
 
         // Check wall collision
         if new_head.x >= self.width || new_head.y >= self.height {
-            self.state = GameState::GameOver;
+            self.game_over = true;
             return;
         }
 
         // Check self collision
         for segment in &self.snake {
             if new_head.x == segment.x && new_head.y == segment.y {
-                self.state = GameState::GameOver;
+                self.game_over = true;
                 return;
             }
         }
@@ -138,6 +144,7 @@ impl Game {
 
         if ate_food {
             self.score += 10;
+            self.food_eaten += 1;
             self.spawn_food();
         } else {
             // Remove tail if no food eaten
@@ -146,7 +153,8 @@ impl Game {
     }
 
     fn spawn_food(&mut self) {
-        loop {
+        // Limit attempts to prevent infinite loop
+        for _attempt in 0..100 {
             let x = self.next_random() % self.width as u32;
             let y = self.next_random() % self.height as u32;
             
@@ -163,9 +171,12 @@ impl Game {
             
             if valid {
                 self.food = new_food;
-                break;
+                return;
             }
         }
+        
+        // Fallback if no valid position found (shouldn't happen with reasonable snake size)
+        self.food = Position::new(0, 0);
     }
 
     // Simple LFSR random number generator

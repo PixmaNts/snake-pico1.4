@@ -11,6 +11,7 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::blocking_mutex::{Mutex as BlockingMutex};
 use embassy_sync::channel::Channel;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use mipidsi::options::{Orientation, Rotation};
 use core::cell::RefCell;
 use embassy_time::{Timer, Instant};
 use static_cell::StaticCell;
@@ -37,8 +38,8 @@ mod engine;
 // use hardware::pico_waveshare::{PicoWaveshareDisplay, PicoWaveshareInput, PicoWaveshareRenderer, PicoPlatform};
 
 
-const DISPLAY_WIDTH: i32 = 135;
-const DISPLAY_HEIGHT: i32 = 240;
+const DISPLAY_WIDTH: i32 = 240;  // Swapped due to 90° rotation
+const DISPLAY_HEIGHT: i32 = 135;
 const CELL_SIZE: i32 = 6;
 const GRID_WIDTH: i32 = DISPLAY_WIDTH / CELL_SIZE;
 const GRID_HEIGHT: i32 = DISPLAY_HEIGHT / CELL_SIZE;
@@ -81,9 +82,10 @@ fn draw_border<T: embedded_graphics::draw_target::DrawTarget<Color = Rgb565>>(di
 fn show_start_screen<T: embedded_graphics::draw_target::DrawTarget<Color = Rgb565>>(display: &mut T) {
     let text_style = MonoTextStyle::new(&FONT_6X10, Rgb565::WHITE);
     
-    let _ = Text::with_baseline("Press B", Point::new(40, 100), text_style, Baseline::Top)
+    // Centered positions for 240x135 landscape orientation
+    let _ = Text::with_baseline("Press B", Point::new(95, 60), text_style, Baseline::Top)
         .draw(display);
-    let _ = Text::with_baseline("to Start", Point::new(35, 120), text_style, Baseline::Top)
+    let _ = Text::with_baseline("to Start", Point::new(90, 75), text_style, Baseline::Top)
         .draw(display);
 }
 
@@ -125,17 +127,20 @@ async fn main(spawner: Spawner) {
     
     // Initialize display with working config
     let mut display = Builder::new(ST7789, spi_interface)
-        .display_size(DISPLAY_WIDTH as u16, DISPLAY_HEIGHT as u16)
+        .display_size(135, 240) // Physical dimensions before rotation
         .display_offset(52, 40) // Waveshare LCD 1.14" offset for 90° rotation
         .invert_colors(ColorInversion::Inverted)
+        .orientation(Orientation::new().rotate(Rotation::Deg90))
         .reset_pin(reset_pin)
         .init(&mut embassy_time::Delay)
         .unwrap();
 
     // Turn on backlight
     let mut _backlight = Output::new(bl, Level::High);
-
     
+    // Wait a bit for display to stabilize
+    Timer::after_millis(100).await;
+
     // Joystik pin for pico lcd 1.4
     // gp2 -up
     // gp3 ctrl
@@ -174,6 +179,12 @@ async fn main(spawner: Spawner) {
     // Simple Snake game loop
     use embedded_graphics::primitives::{Rectangle, PrimitiveStyle};
     use game::{Game, Direction};
+    
+    // Game state management
+    let mut current_state = GameState::WaitingStart;
+    
+    // Show initial start screen
+    show_start_screen(&mut display);
 
 // Input events for async handling
 #[derive(Copy, Clone, Debug)]
@@ -208,22 +219,22 @@ async fn input_handler(
         let now = Instant::now();
         if now.duration_since(last_direction_time).as_millis() > DIRECTION_COOLDOWN_MS {
             if joy_up.is_low() {
-                sender.send(InputEvent::DirectionChange(Direction::Right)).await;
+                sender.send(InputEvent::DirectionChange(Direction::Up)).await;
                 last_direction_time = now;
                 debug!("Direction: UP");
                 Timer::after_millis(50).await; // Extra debounce for direction
             } else if joy_down.is_low() {
-                sender.send(InputEvent::DirectionChange(Direction::Left)).await;
+                sender.send(InputEvent::DirectionChange(Direction::Down)).await;
                 last_direction_time = now;
                 debug!("Direction: DOWN");
                 Timer::after_millis(50).await;
             } else if joy_left.is_low() {
-                sender.send(InputEvent::DirectionChange(Direction::Up)).await;
+                sender.send(InputEvent::DirectionChange(Direction::Left)).await;
                 last_direction_time = now;
                 debug!("Direction: LEFT");
                 Timer::after_millis(50).await;
             } else if joy_right.is_low() {
-                sender.send(InputEvent::DirectionChange(Direction::Down)).await;
+                sender.send(InputEvent::DirectionChange(Direction::Right)).await;
                 last_direction_time = now;
                 debug!("Direction: RIGHT");
                 Timer::after_millis(50).await;
@@ -259,23 +270,47 @@ async fn input_handler(
         while let Ok(event) = receiver.try_receive() {
             match event {
                 InputEvent::DirectionChange(direction) => {
-                    snake_game.set_direction(direction);
+                    // Only allow direction changes when playing
+                    if current_state == GameState::Playing {
+                        snake_game.set_direction(direction);
+                    }
                 }
                 InputEvent::ButtonA => {
-                    snake_game.reset();
-                    display.clear(Rgb565::BLACK).unwrap();
-                    draw_border(&mut display);
-                    previous_snake = snake_game.snake.clone();
-                    previous_food = snake_game.food;
+                    // Reset game (works in any state except WaitingStart)
+                    if current_state != GameState::WaitingStart {
+                        snake_game.reset();
+                        display.clear(Rgb565::BLACK).unwrap();
+                        draw_border(&mut display);
+                        show_start_screen(&mut display);
+                        current_state = GameState::WaitingStart;
+                        previous_snake = snake_game.snake.clone();
+                        previous_food = snake_game.food;
+                    }
                 }
                 InputEvent::ButtonB => {
-                    // Could add pause/resume functionality here
+                    match current_state {
+                        GameState::WaitingStart => {
+                            // Start the game
+                            current_state = GameState::Playing;
+                            display.clear(Rgb565::BLACK).unwrap();
+                            draw_border(&mut display);
+                            info!("Game started!");
+                        }
+                        GameState::Playing => {
+                            // Pause - for now just show start screen again
+                            current_state = GameState::WaitingStart;
+                            display.clear(Rgb565::BLACK).unwrap();
+                            draw_border(&mut display);
+                            show_start_screen(&mut display);
+                            info!("Game paused");
+                        }
+                    }
                 }
             }
         }
         
-        // Only update game logic every 10 frames (slower game speed)
-        if frame_counter % 10 == 0 {
+        // Only update game logic every 10 frames (slower game speed) and when playing
+        if current_state == GameState::Playing && frame_counter % 10 == 0 {
             snake_game.update();
             
             // DIRTY RECTANGLE RENDERING - NO MORE FLICKER!
