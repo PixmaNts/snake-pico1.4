@@ -2,7 +2,22 @@
 name = "snake_embedded"
 version = "0.1.0"
 edition = "2021"
+authors = ["PixmaNts <maxime@maxime-pointet.fr>"]
+description = "A classic Snake game for embedded systems using Rust and Embassy async framework on Raspberry Pi Pico with Waveshare LCD"
+documentation = "https://github.com/PixmaNts/snake-pico1.4"
+repository = "https://github.com/PixmaNts/snake-pico1.4.git"
+homepage = "https://github.com/PixmaNts/snake-pico1.4"
+license = "MIT"
+keywords = ["embedded", "game", "pico", "embassy", "no-std"]
+categories = ["embedded", "games", "no-std"]
+readme = "README.md"
 default-run = "snake_embedded"
+
+[package.metadata]
+# Metadata for embedded projects
+target-chip = "RP2040"
+target-board = "Raspberry Pi Pico"
+display = "Waveshare LCD 1.14\""
 [[bin]]
 name = "snake_embedded"
 path = "src/main.rs"
